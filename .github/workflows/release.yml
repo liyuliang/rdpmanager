@@ -86,7 +86,18 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ matrix.platform }}" == "windows" ]; then
-            cp target/release/rdpmanager.exe dist/rdpmanager-windows-amd64.exe
+            TAG="${{ needs.prepare.outputs.tag }}"
+            VI_VER="0.1.0.0"
+            if [[ "${TAG}" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              VI_VER="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.0"
+            fi
+            makensis \
+              -DAPP_VERSION="${TAG}" \
+              -DVI_VERSION="${VI_VER}" \
+              -DBIN_PATH="$(pwd)/target/release/rdpmanager.exe" \
+              -DOUT_FILE="$(pwd)/dist/rdpmanager-windows-amd64-installer.exe" \
+              -DICON_PATH="$(pwd)/assets/app.ico" \
+              installer/windows/rdpmanager.nsi
           elif [ "${{ matrix.platform }}" == "macos" ]; then
             tar -czf dist/rdpmanager-macos-arm64.tar.gz -C target/aarch64-apple-darwin/release rdpmanager
             tar -czf dist/rdpmanager-macos-amd64.tar.gz -C target/x86_64-apple-darwin/release rdpmanager

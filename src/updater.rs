@@ -116,7 +116,7 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 
 pub fn expected_asset_name() -> &'static str {
     if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        "rdpmanager-windows-amd64.exe"
+        "rdpmanager-windows-amd64-installer.exe"
     } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "rdpmanager-macos-arm64.tar.gz"
     } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
@@ -246,7 +246,19 @@ pub fn download_and_apply(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
-    let tmp_dl = dir.join(".rdpmanager-update.tmp");
+    let lower_name = asset_name.to_ascii_lowercase();
+    let is_windows_installer = cfg!(target_os = "windows")
+        && (lower_name.ends_with("-installer.exe") || lower_name.ends_with("-setup.exe"));
+
+    let tmp_dl = if is_windows_installer {
+        let file_name = Path::new(asset_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("rdpmanager-installer.exe");
+        std::env::temp_dir().join(file_name)
+    } else {
+        dir.join(".rdpmanager-update.tmp")
+    };
     {
         let mut reader = resp.into_reader();
         let mut out = File::create(&tmp_dl).map_err(|e| format!("创建临时文件失败: {e}"))?;
@@ -271,9 +283,18 @@ pub fn download_and_apply(
         ctx.request_repaint();
     }
 
-    let new_bin = if asset_name.to_ascii_lowercase().ends_with(".exe") {
+    if is_windows_installer {
+        let installer_str = tmp_dl.to_string_lossy().to_string();
+        Command::new("cmd")
+            .args(["/C", "start", "", &installer_str])
+            .spawn()
+            .map_err(|e| format!("启动安装程序失败: {e}"))?;
+        return Ok(());
+    }
+
+    let new_bin = if lower_name.ends_with(".exe") {
         tmp_dl.clone()
-    } else if asset_name.to_ascii_lowercase().ends_with(".tar.gz") {
+    } else if lower_name.ends_with(".tar.gz") {
         let extracted = dir.join(".rdpmanager-update.bin");
         extract_from_tar_gz(&tmp_dl, "rdpmanager", &extracted)?;
         let _ = fs::remove_file(&tmp_dl);
