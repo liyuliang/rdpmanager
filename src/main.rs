@@ -698,7 +698,6 @@ struct App {
     master_focus_pending: bool,
 
     tray: tray::TrayHandle,
-    confirm_exit: bool,
     hidden_to_tray: bool,
 
     update_tx: std::sync::mpsc::Sender<updater::UpdateEvent>,
@@ -776,7 +775,6 @@ impl App {
             master_error: None,
             master_focus_pending: false,
             tray: tray::TrayHandle::start(egui_ctx),
-            confirm_exit: false,
             hidden_to_tray: false,
             update_tx,
             update_rx,
@@ -805,6 +803,28 @@ impl App {
         self.master_new.clear();
         self.master_confirm.clear();
         self.master_error = None;
+    }
+
+    fn reset_app_state(&mut self) {
+        self.filter.clear();
+        self.selected = None;
+        self.status = None;
+        self.form_name.clear();
+        self.form_host.clear();
+        self.form_user.clear();
+        self.form_error = None;
+        self.form_focus_pending = false;
+        self.edit_name.clear();
+        self.edit_host.clear();
+        self.edit_user.clear();
+        self.edit_error = None;
+        self.edit_focus_pending = false;
+        self.update_modal = None;
+        self.lock_now();
+        if !self.auth.is_enabled() && !self.auth.needs_initial_setup() {
+            self.unlocked = true;
+            self.lock_focus_pending = false;
+        }
     }
 
     fn open_master_modal(&mut self) {
@@ -2387,89 +2407,6 @@ impl App {
         }
     }
 
-    // ── 退出确认弹窗 ────────────────────────────────────────────────
-    fn draw_exit_modal(&mut self, ctx: &egui::Context) {
-        if !self.confirm_exit {
-            return;
-        }
-
-        let mut confirm = false;
-        let mut cancel = false;
-
-        let modal = egui::Modal::new(egui::Id::new("exit_confirm_modal"))
-            .backdrop_color(Color32::from_rgba_unmultiplied_const(6, 9, 16, 175))
-            .frame(modal_frame());
-
-        let resp = modal.show(ctx, |ui| {
-            ui.set_width(320.0);
-            ui.spacing_mut().item_spacing.y = 0.0;
-
-            ui.horizontal(|ui| {
-                let (tile, _) =
-                    ui.allocate_exact_size(vec2(32.0, 32.0), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(tile, CornerRadius::same(9), DANGER_SOFT);
-                paint_icon(ui.painter(), Icon::Close, tile.center(), 15.0, DANGER);
-
-                ui.add_space(4.0);
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("确认退出")
-                            .size(15.5)
-                            .strong()
-                            .color(TEXT),
-                    );
-                    ui.label(
-                        RichText::new("确定要退出 RDP 管理器吗？")
-                            .size(12.0)
-                            .color(TEXT_MUTED),
-                    );
-                });
-            });
-
-            ui.add_space(18.0);
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    if ui
-                        .add(
-                            ModernButton::new("取消")
-                                .kind(BtnKind::Secondary)
-                                .min_w(78.0)
-                                .height(32.0),
-                        )
-                        .clicked()
-                    {
-                        cancel = true;
-                    }
-                    if ui
-                        .add(
-                            ModernButton::new("确定")
-                                .kind(BtnKind::DangerSolid)
-                                .min_w(78.0)
-                                .height(32.0),
-                        )
-                        .clicked()
-                    {
-                        confirm = true;
-                    }
-                },
-            );
-        });
-
-        if resp.backdrop_response.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-
-        if confirm {
-            self.confirm_exit = false;
-            self.tray.mark_quitting();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        } else if cancel {
-            self.confirm_exit = false;
-        }
-    }
-
     fn start_manual_update_check(&mut self, ctx: &egui::Context) {
         self.update_modal = Some(UpdateModalState {
             checking: true,
@@ -2795,25 +2732,15 @@ impl eframe::App for App {
             }
         }
 
-        if !self.hidden_to_tray && ctx.input(|i| i.viewport().minimized == Some(true)) {
-            self.hidden_to_tray = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        }
-
         if ctx.input(|i| i.viewport().close_requested()) && !self.tray.is_quitting() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.confirm_exit = true;
-            if self.hidden_to_tray {
-                self.hidden_to_tray = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            }
+            self.hidden_to_tray = true;
+            self.reset_app_state();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
         if !self.unlocked {
             self.draw_lock_screen(ui, &ctx);
-            self.draw_exit_modal(&ctx);
             return;
         }
 
@@ -2824,7 +2751,6 @@ impl eframe::App for App {
             } else if self.last_activity.elapsed() >= Duration::from_secs(AUTO_LOCK_SECS) {
                 self.lock_now();
                 self.draw_lock_screen(ui, &ctx);
-                self.draw_exit_modal(&ctx);
                 return;
             }
             ctx.request_repaint_after(Duration::from_secs(5));
@@ -2852,7 +2778,6 @@ impl eframe::App for App {
         self.draw_edit_modal(&ctx);
         self.draw_delete_modal(&ctx);
         self.draw_master_modal(&ctx);
-        self.draw_exit_modal(&ctx);
         self.draw_update_modal(&ctx);
 
         if hovering {
