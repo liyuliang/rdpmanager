@@ -728,7 +728,7 @@ impl App {
         let unlocked = !auth.is_enabled() && !auth.needs_initial_setup();
         updater::cleanup_old_binary();
         let (update_tx, update_rx) = std::sync::mpsc::channel();
-        {
+        if !updater::is_dev_version(updater::current_version()) {
             let tx = update_tx.clone();
             let ctx_bg = egui_ctx.clone();
             std::thread::spawn(move || {
@@ -2543,10 +2543,46 @@ impl App {
         let mut start_download = false;
         let mut open_url: Option<String> = None;
 
-        let resp = egui::Modal::new(egui::Id::new("update_modal")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.label(RichText::new("检查更新").size(16.0).strong().color(TEXT));
-            ui.add_space(10.0);
+        let modal = egui::Modal::new(egui::Id::new("update_modal"))
+            .backdrop_color(Color32::from_rgba_unmultiplied_const(6, 9, 16, 175))
+            .frame(modal_frame());
+
+        let resp = modal.show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.horizontal(|ui| {
+                let (tile, _) =
+                    ui.allocate_exact_size(vec2(32.0, 32.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(tile, CornerRadius::same(9), ACCENT_SOFT);
+                paint_icon(ui.painter(), Icon::Import, tile.center(), 16.0, ACCENT);
+
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("检查更新").size(15.0).strong().color(TEXT));
+                    ui.label(
+                        RichText::new("GitHub Release 版本检测与自动更新")
+                            .size(11.0)
+                            .color(TEXT_FAINT),
+                    );
+                });
+
+                if !state.updating {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                ModernButton::new("✕")
+                                    .kind(BtnKind::Ghost)
+                                    .min_w(28.0)
+                                    .height(28.0),
+                            )
+                            .clicked()
+                        {
+                            close_modal = true;
+                        }
+                    });
+                }
+            });
+            ui.add_space(12.0);
 
             if state.checking {
                 ui.label(

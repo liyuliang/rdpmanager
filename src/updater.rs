@@ -13,7 +13,6 @@ pub const REPO_NAME: &str = "rdpmanager";
 pub struct ReleaseInfo {
     pub current_version: String,
     pub latest_version: String,
-    pub release_name: String,
     pub release_notes: String,
     pub html_url: String,
     pub asset_name: String,
@@ -41,8 +40,6 @@ pub enum UpdateEvent {
 #[derive(Deserialize)]
 struct GhRelease {
     tag_name: String,
-    #[serde(default)]
-    name: String,
     #[serde(default)]
     body: String,
     #[serde(default)]
@@ -166,7 +163,6 @@ pub fn check_latest() -> Result<ReleaseInfo, String> {
             return Ok(ReleaseInfo {
                 current_version: cur,
                 latest_version: String::new(),
-                release_name: String::new(),
                 release_notes: String::new(),
                 html_url: default_url,
                 asset_name: String::new(),
@@ -208,7 +204,6 @@ pub fn check_latest() -> Result<ReleaseInfo, String> {
     Ok(ReleaseInfo {
         current_version: cur,
         latest_version: rel.tag_name.clone(),
-        release_name: if rel.name.is_empty() { rel.tag_name } else { rel.name },
         release_notes: rel.body,
         html_url: if rel.html_url.is_empty() { default_url } else { rel.html_url },
         asset_name,
