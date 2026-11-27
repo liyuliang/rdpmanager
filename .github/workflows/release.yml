@@ -63,6 +63,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
 
+      - name: Install NSIS (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          if ! command -v makensis >/dev/null 2>&1; then
+            if [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+              choco install nsis -y --no-progress
+            fi
+            echo "C:\Program Files (x86)\NSIS" >> "$GITHUB_PATH"
+          fi
+
       - name: Run tests
         run: cargo test
 
@@ -91,12 +102,13 @@ jobs:
             if [[ "${TAG}" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
               VI_VER="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.0"
             fi
+            WIN_PWD=$(cygpath -w "$(pwd)")
             makensis \
               -DAPP_VERSION="${TAG}" \
               -DVI_VERSION="${VI_VER}" \
-              -DBIN_PATH="$(pwd)/target/release/rdpmanager.exe" \
-              -DOUT_FILE="$(pwd)/dist/rdpmanager-windows-amd64-installer.exe" \
-              -DICON_PATH="$(pwd)/assets/app.ico" \
+              -DBIN_PATH="${WIN_PWD}\\target\\release\\rdpmanager.exe" \
+              -DOUT_FILE="${WIN_PWD}\\dist\\rdpmanager-windows-amd64-installer.exe" \
+              -DICON_PATH="${WIN_PWD}\\assets\\app.ico" \
               installer/windows/rdpmanager.nsi
           elif [ "${{ matrix.platform }}" == "macos" ]; then
             tar -czf dist/rdpmanager-macos-arm64.tar.gz -C target/aarch64-apple-darwin/release rdpmanager
