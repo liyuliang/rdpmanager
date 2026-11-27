@@ -104,6 +104,7 @@ jobs:
             fi
             WIN_PWD=$(cygpath -w "$(pwd)")
             makensis \
+              -INPUTCHARSET UTF8 \
               -DAPP_VERSION="${TAG}" \
               -DVI_VERSION="${VI_VER}" \
               -DBIN_PATH="${WIN_PWD}\\target\\release\\rdpmanager.exe" \

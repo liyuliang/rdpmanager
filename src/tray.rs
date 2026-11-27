@@ -221,7 +221,7 @@ mod win {
     }
 
     fn restore_main_window() {
-        let title = to_wide("RDP 管理器");
+        let title = to_wide("RDP Manager");
         unsafe {
             let main_hwnd = FindWindowW(null(), title.as_ptr());
             if main_hwnd != 0 {
@@ -233,7 +233,7 @@ mod win {
     }
 
     fn close_main_window() {
-        let title = to_wide("RDP 管理器");
+        let title = to_wide("RDP Manager");
         unsafe {
             let main_hwnd = FindWindowW(null(), title.as_ptr());
             if main_hwnd != 0 {
@@ -377,7 +377,7 @@ mod win {
             nid.u_flags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
             nid.u_callback_message = WM_TRAYICON;
             nid.h_icon = h_icon;
-            let tip = to_wide("RDP 管理器");
+            let tip = to_wide("RDP Manager");
             let copy_len = tip.len().min(nid.sz_tip.len());
             nid.sz_tip[..copy_len].copy_from_slice(&tip[..copy_len]);
 

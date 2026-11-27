@@ -5,7 +5,7 @@ ManifestDPIAware true
   !define APP_NAME "RDPManager"
 !endif
 !ifndef APP_DISPLAY_NAME
-  !define APP_DISPLAY_NAME "RDP 管理器"
+  !define APP_DISPLAY_NAME "RDP Manager"
 !endif
 !ifndef APP_VERSION
   !define APP_VERSION "0.1.0"

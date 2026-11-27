@@ -46,7 +46,7 @@ const AUTO_LOCK_SECS: u64 = 10 * 60;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("RDP 管理器")
+            .with_title("RDP Manager")
             .with_inner_size([1080.0, 680.0])
             .with_min_inner_size([900.0, 520.0])
             .with_drag_and_drop(true),
@@ -54,7 +54,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "RDP 管理器",
+        "RDP Manager",
         options,
         Box::new(|cc| {
             setup_fonts(&cc.egui_ctx);
@@ -1001,7 +1001,7 @@ impl App {
                     paint_icon(ui.painter(), Icon::Monitor, logo.center(), 13.0, Color32::WHITE);
 
                     ui.label(
-                        RichText::new("RDP 管理器")
+                        RichText::new("RDP Manager")
                             .size(14.0)
                             .strong()
                             .color(TEXT),
@@ -2073,7 +2073,7 @@ impl App {
 
                             ui.add_space(16.0);
                             ui.label(
-                                RichText::new("RDP 管理器")
+                                RichText::new("RDP Manager")
                                     .size(20.0)
                                     .strong()
                                     .color(TEXT),
