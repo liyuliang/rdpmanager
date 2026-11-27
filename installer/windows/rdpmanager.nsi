@@ -35,16 +35,15 @@ VIAddVersionKey "FileVersion"     "${APP_VERSION}"
 RequestExecutionLevel admin
 
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ICON "${ICON_PATH}"
 !define MUI_UNICON "${ICON_PATH}"
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\rdpmanager.exe"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -52,13 +51,33 @@ RequestExecutionLevel admin
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
+AutoCloseWindow true
+
 Name "${APP_DISPLAY_NAME}"
 OutFile "${OUT_FILE}"
 InstallDir "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
 ShowInstDetails show
 
+Function .onInit
+  SetRegView 64
+  ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
+  ${If} $0 == ""
+    SetRegView 32
+    ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
+    SetRegView 64
+  ${EndIf}
+  ${If} $0 != ""
+    StrCpy $INSTDIR $0
+  ${EndIf}
+FunctionEnd
+
+Function .onInstSuccess
+  Exec '"$INSTDIR\rdpmanager.exe"'
+FunctionEnd
+
 Section "MainSection" SEC01
+  SetRegView 64
   SetShellVarContext all
   SetOutPath "$INSTDIR"
 
@@ -79,6 +98,7 @@ Section "MainSection" SEC01
 SectionEnd
 
 Section "Uninstall"
+  SetRegView 64
   SetShellVarContext all
 
   Delete "$SMPROGRAMS\${APP_DISPLAY_NAME}.lnk"
