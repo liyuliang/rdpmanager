@@ -4,6 +4,7 @@ mod auth;
 mod launcher;
 mod store;
 mod tray;
+mod updater;
 
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Margin, RichText, Stroke, StrokeKind,
@@ -699,6 +700,19 @@ struct App {
     tray: tray::TrayHandle,
     confirm_exit: bool,
     hidden_to_tray: bool,
+
+    update_tx: std::sync::mpsc::Sender<updater::UpdateEvent>,
+    update_rx: std::sync::mpsc::Receiver<updater::UpdateEvent>,
+    update_modal: Option<UpdateModalState>,
+}
+
+struct UpdateModalState {
+    checking: bool,
+    info: Option<updater::ReleaseInfo>,
+    updating: bool,
+    progress_done: u64,
+    progress_total: u64,
+    error: Option<String>,
 }
 
 impl App {
@@ -712,6 +726,21 @@ impl App {
             }
         };
         let unlocked = !auth.is_enabled() && !auth.needs_initial_setup();
+        updater::cleanup_old_binary();
+        let (update_tx, update_rx) = std::sync::mpsc::channel();
+        {
+            let tx = update_tx.clone();
+            let ctx_bg = egui_ctx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                let result = updater::check_latest();
+                let _ = tx.send(updater::UpdateEvent::CheckDone {
+                    manual: false,
+                    result,
+                });
+                ctx_bg.request_repaint();
+            });
+        }
 
         let mut app = Self {
             store: store::Store::empty(),
@@ -749,6 +778,9 @@ impl App {
             tray: tray::TrayHandle::start(egui_ctx),
             confirm_exit: false,
             hidden_to_tray: false,
+            update_tx,
+            update_rx,
+            update_modal: None,
         };
         match store::Store::load() {
             Ok(s) => app.store = s,
@@ -923,6 +955,7 @@ impl App {
         let mut clicked_import = false;
         let mut clicked_master = false;
         let mut clicked_lock = false;
+        let mut clicked_update = false;
         let master_enabled = self.auth.is_enabled();
 
         egui::Panel::top(egui::Id::new("app_header"))
@@ -1015,6 +1048,16 @@ impl App {
                             {
                                 clicked_master = true;
                             }
+                            if ui
+                                .add(
+                                    ModernButton::new("检查更新")
+                                        .kind(BtnKind::Ghost)
+                                        .min_w(80.0),
+                                )
+                                .clicked()
+                            {
+                                clicked_update = true;
+                            }
 
                             ui.add_space(6.0);
                             let edit = egui::TextEdit::singleline(&mut filter)
@@ -1072,6 +1115,9 @@ impl App {
         }
         if clicked_lock {
             self.lock_now();
+        }
+        if clicked_update {
+            self.start_manual_update_check(ui.ctx());
         }
     }
 
@@ -2423,11 +2469,280 @@ impl App {
             self.confirm_exit = false;
         }
     }
+
+    fn start_manual_update_check(&mut self, ctx: &egui::Context) {
+        self.update_modal = Some(UpdateModalState {
+            checking: true,
+            info: None,
+            updating: false,
+            progress_done: 0,
+            progress_total: 0,
+            error: None,
+        });
+        let tx = self.update_tx.clone();
+        let ctx_bg = ctx.clone();
+        std::thread::spawn(move || {
+            let result = updater::check_latest();
+            let _ = tx.send(updater::UpdateEvent::CheckDone {
+                manual: true,
+                result,
+            });
+            ctx_bg.request_repaint();
+        });
+    }
+
+    fn poll_update_events(&mut self, ctx: &egui::Context) {
+        while let Ok(ev) = self.update_rx.try_recv() {
+            match ev {
+                updater::UpdateEvent::CheckDone { manual, result } => match result {
+                    Ok(info) => {
+                        if manual || info.has_update {
+                            self.update_modal = Some(UpdateModalState {
+                                checking: false,
+                                info: Some(info),
+                                updating: false,
+                                progress_done: 0,
+                                progress_total: 0,
+                                error: None,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        if manual {
+                            self.update_modal = None;
+                            self.notify(format!("检查更新失败：{e}"), true);
+                        }
+                    }
+                },
+                updater::UpdateEvent::Progress { done, total } => {
+                    if let Some(m) = &mut self.update_modal {
+                        m.progress_done = done;
+                        m.progress_total = total;
+                    }
+                }
+                updater::UpdateEvent::ApplyDone => {
+                    self.tray.mark_quitting();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                updater::UpdateEvent::ApplyError(e) => {
+                    if let Some(m) = &mut self.update_modal {
+                        m.updating = false;
+                        m.error = Some(e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw_update_modal(&mut self, ctx: &egui::Context) {
+        let Some(mut state) = self.update_modal.take() else {
+            return;
+        };
+
+        let mut close_modal = false;
+        let mut start_download = false;
+        let mut open_url: Option<String> = None;
+
+        let resp = egui::Modal::new(egui::Id::new("update_modal")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label(RichText::new("检查更新").size(16.0).strong().color(TEXT));
+            ui.add_space(10.0);
+
+            if state.checking {
+                ui.label(
+                    RichText::new("正在检查 GitHub Release 最新版本…")
+                        .size(13.0)
+                        .color(TEXT_MUTED),
+                );
+                ui.add_space(16.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(ModernButton::new("取消").min_w(78.0)).clicked() {
+                        close_modal = true;
+                    }
+                });
+            } else if let Some(info) = &state.info {
+                egui::Frame::new()
+                    .fill(BG_SURFACE_2)
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("当前版本：{}", info.current_version))
+                                    .size(12.5)
+                                    .color(TEXT),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let latest_txt = if info.latest_version.is_empty() {
+                                        "暂无".to_string()
+                                    } else {
+                                        info.latest_version.clone()
+                                    };
+                                    ui.label(
+                                        RichText::new(format!("最新版本：{latest_txt}"))
+                                            .size(12.5)
+                                            .color(TEXT),
+                                    );
+                                },
+                            );
+                        });
+                    });
+
+                ui.add_space(8.0);
+                if info.latest_version.is_empty() {
+                    ui.label(
+                        RichText::new("仓库暂未发布正式 Release 版本。")
+                            .size(12.5)
+                            .color(TEXT_MUTED),
+                    );
+                } else if !info.has_update && !info.is_dev {
+                    ui.label(RichText::new("当前已是最新版本。").size(12.5).color(SUCCESS));
+                } else if info.is_dev {
+                    ui.label(
+                        RichText::new(format!(
+                            "当前为开发构建（{}），GitHub 最新正式版为 {}。",
+                            info.current_version, info.latest_version
+                        ))
+                        .size(12.5)
+                        .color(TEXT_MUTED),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(format!("发现新版本 {}，建议立即更新！", info.latest_version))
+                            .size(13.0)
+                            .color(ACCENT),
+                    );
+                }
+
+                if !info.release_notes.trim().is_empty() {
+                    ui.add_space(8.0);
+                    egui::Frame::new()
+                        .fill(BG_APP)
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(150.0)
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(info.release_notes.trim())
+                                            .size(12.0)
+                                            .color(TEXT_MUTED),
+                                    );
+                                });
+                        });
+                }
+
+                if state.updating {
+                    ui.add_space(10.0);
+                    let total = state.progress_total.max(info.asset_size);
+                    let frac = if total > 0 {
+                        (state.progress_done as f32 / total as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let pct = (frac * 100.0) as u32;
+                    ui.add(egui::ProgressBar::new(frac).text(format!("正在下载更新包… {pct}%")));
+                }
+
+                if let Some(err) = &state.error {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(err).size(12.0).color(DANGER));
+                }
+
+                ui.add_space(16.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if info.can_self_update
+                        && (info.has_update || info.is_dev)
+                        && !state.updating
+                        && ui
+                            .add(
+                                ModernButton::new("立即更新并重启")
+                                    .kind(BtnKind::Primary)
+                                    .min_w(124.0)
+                                    .height(32.0),
+                            )
+                            .clicked()
+                    {
+                        start_download = true;
+                    }
+                    if !info.html_url.is_empty()
+                        && !state.updating
+                        && ui
+                            .add(
+                                ModernButton::new("前往 GitHub 下载")
+                                    .kind(BtnKind::Secondary)
+                                    .min_w(124.0)
+                                    .height(32.0),
+                            )
+                            .clicked()
+                    {
+                        open_url = Some(info.html_url.clone());
+                    }
+                    if !state.updating
+                        && ui
+                            .add(
+                                ModernButton::new(if info.has_update { "暂不更新" } else { "关闭" })
+                                    .kind(BtnKind::Secondary)
+                                    .min_w(78.0)
+                                    .height(32.0),
+                            )
+                            .clicked()
+                    {
+                        close_modal = true;
+                    }
+                });
+            }
+        });
+
+        if !state.updating
+            && (resp.backdrop_response.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape)))
+        {
+            close_modal = true;
+        }
+
+        if let Some(url) = open_url {
+            updater::open_url(&url);
+        }
+
+        if start_download {
+            if let Some(info) = &state.info {
+                state.updating = true;
+                state.error = None;
+                state.progress_done = 0;
+                state.progress_total = info.asset_size;
+                let url = info.asset_url.clone();
+                let name = info.asset_name.clone();
+                let tx = self.update_tx.clone();
+                let ctx_bg = ctx.clone();
+                std::thread::spawn(move || {
+                    match updater::download_and_apply(&url, &name, &tx, &ctx_bg) {
+                        Ok(()) => {
+                            let _ = tx.send(updater::UpdateEvent::ApplyDone);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(updater::UpdateEvent::ApplyError(e));
+                        }
+                    }
+                    ctx_bg.request_repaint();
+                });
+            }
+        }
+
+        if !close_modal {
+            self.update_modal = Some(state);
+        }
+    }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.poll_update_events(&ctx);
 
         for ev in self.tray.poll() {
             match ev {
@@ -2502,6 +2817,7 @@ impl eframe::App for App {
         self.draw_delete_modal(&ctx);
         self.draw_master_modal(&ctx);
         self.draw_exit_modal(&ctx);
+        self.draw_update_modal(&ctx);
 
         if hovering {
             Self::draw_drop_overlay(&ctx);
